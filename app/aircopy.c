@@ -14,6 +14,8 @@
  *     limitations under the License.
  */
 
+#ifdef ENABLE_AIRCOPY
+
 #include "app/aircopy.h"
 #include "audio.h"
 #include "driver/bk4819.h"
@@ -109,14 +111,19 @@ static void AIRCOPY_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 		INPUTBOX_Append(Key);
 		gRequestDisplayScreen = DISPLAY_AIRCOPY;
 		if (gInputBoxIndex < 6) {
+#ifdef ENABLE_VOICE
 			gAnotherVoiceID = (VOICE_ID_t)Key;
+#endif
 			return;
 		}
 		gInputBoxIndex = 0;
 		NUMBER_Get(gInputBox, &Frequency);
 		for (i = 0; i < 7; i++) {
 			if (Frequency >= LowerLimitFrequencyBandTable[i] && Frequency <= UpperLimitFrequencyBandTable[i]) {
+#ifdef ENABLE_VOICE
 				gAnotherVoiceID = (VOICE_ID_t)Key;
+#endif
+
 				gRxVfo->Band = i;
 				Frequency += 75;
 				Frequency = FREQUENCY_FloorToStep(Frequency, gRxVfo->StepFrequency, 0);
@@ -188,3 +195,4 @@ void AIRCOPY_ProcessKeys(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 	}
 }
 
+#endif

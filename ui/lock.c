@@ -45,7 +45,7 @@ static void Render(void)
 		}
 	}
 	String[6] = 0;
-	UI_PrintString(String, 0, 127, 3, 12, true);
+	UI_PrintString(String, 0, 127, 3, 12);
 	ST7565_BlitStatusLine();
 	ST7565_BlitFullScreen();
 }

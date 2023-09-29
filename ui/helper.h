@@ -22,10 +22,15 @@
 
 void UI_GenerateChannelString(char *pString, uint8_t Channel);
 void UI_GenerateChannelStringEx(char *pString, bool bShowPrefix, uint8_t ChannelNumber);
-void UI_PrintString(const char *pString, uint8_t Start, uint8_t End, uint8_t Line, uint8_t Width, bool bCentered);
+void UI_PrintString(const char *pString, uint8_t Start, uint8_t End, uint8_t Line, uint8_t Width);
 void UI_PrintStringSmall(const char *pString, uint8_t Start, uint8_t End, uint8_t Line);
+#ifdef ENABLE_SMALL_BOLD
+	void UI_PrintStringSmallBold(const char *pString, uint8_t Start, uint8_t End, uint8_t Line);
+#endif
+void UI_PrintStringSmallBuffer(const char *pString, uint8_t *buffer);
 void UI_DisplayFrequency(const char *pDigits, uint8_t X, uint8_t Y, bool bDisplayLeadingZero, bool bFlag);
-void UI_DisplaySmallDigits(uint8_t Size, const char *pString, uint8_t X, uint8_t Y);
+void UI_DisplayFrequencySmall(const char *pDigits, uint8_t X, uint8_t Y, bool bDisplayLeadingZero);
+void UI_DisplaySmallDigits(const uint8_t size, const char *str, const uint8_t x, const uint8_t y, const bool display_leading_zeros);
 
 #endif
 

@@ -15,6 +15,7 @@
  */
 
 #include <string.h>
+
 #include "driver/st7565.h"
 #include "external/printf/printf.h"
 #include "font.h"
@@ -74,12 +75,12 @@ void UI_GenerateChannelStringEx(char *pString, bool bShowPrefix, uint8_t Channel
 	}
 }
 
-void UI_PrintString(const char *pString, uint8_t Start, uint8_t End, uint8_t Line, uint8_t Width, bool bCentered)
+void UI_PrintString(const char *pString, uint8_t Start, uint8_t End, uint8_t Line, uint8_t Width)
 {
 	uint32_t i, Length;
 
 	Length = strlen(pString);
-	if (bCentered) {
+	if (End > Start)
 		Start += (((End - Start) - (Length * Width)) + 1) / 2;
 	}
 	for (i = 0; i < Length; i++) {
@@ -113,33 +114,157 @@ void UI_PrintStringSmall(const char *pString, uint8_t Start, uint8_t End, uint8_
 	}
 }
 
-void UI_DisplayFrequency(const char *pDigits, uint8_t X, uint8_t Y,
-                         bool bDisplayLeadingZero, bool bFlag) {
-  char String[8];
-  char baseDigit = '0';
-  uint8_t d;
-  sprintf(String, "---.---");
-  for (int i = 0; i < 3; i++) {
-    d = pDigits[i];
-    if (d < 10) {
-      String[i] = d + baseDigit;
-    }
-  }
-  for (int i = 0; i < 3; i++) {
-    d = pDigits[i + 3];
-    if (d < 10) {
-      String[i + 4] = d + baseDigit;
-    }
-  }
-  UI_PrintString(String, 8, 127, Y, 8, 1);
-}
+#ifdef ENABLE_SMALL_BOLD
+	void UI_PrintStringSmallBold(const char *pString, uint8_t Start, uint8_t End, uint8_t Line)
+	{
+		const size_t Length = strlen(pString);
+		size_t       i;
+	
+		if (End > Start)
+			Start += (((End - Start) - (Length * 8)) + 1) / 2;
+	
+		const unsigned int char_width   = ARRAY_SIZE(gFontSmallBold[0]);
+		const unsigned int char_spacing = char_width + 1;
+		uint8_t            *pFb         = gFrameBuffer[Line] + Start;
+		for (i = 0; i < Length; i++)
+		{
+			if (pString[i] >= 32)
+			{
+				const unsigned int index = (unsigned int)pString[i] - 32;
+				if (index < ARRAY_SIZE(gFontSmallBold))
+					memmove(pFb + (i * char_spacing) + 1, &gFontSmallBold[index], char_width);
+			}
+		}
+	}
+#endif
 
-void UI_DisplaySmallDigits(uint8_t Size, const char *pString, uint8_t X, uint8_t Y)
+void UI_PrintStringSmallBuffer(const char *pString, uint8_t *buffer)
 {
-	uint8_t i;
-
-	for (i = 0; i < Size; i++) {
-		memcpy(gFrameBuffer[Y] + (i * 7) + X, gFontSmallDigits[(uint8_t)pString[i]], 7);
+	size_t i;
+	const unsigned int char_width   = ARRAY_SIZE(gFontSmall[0]);
+	const unsigned int char_spacing = char_width + 1;
+	for (i = 0; i < strlen(pString); i++)
+	{
+		if (pString[i] >= 32)
+		{
+			const unsigned int index = (unsigned int)pString[i] - 32;
+			if (index < ARRAY_SIZE(gFontSmall))
+				memmove(buffer + (i * char_spacing) + 1, &gFontSmall[index], char_width);
+		}
 	}
 }
 
+void UI_DisplayFrequency(const char *pDigits, uint8_t X, uint8_t Y, bool bDisplayLeadingZero, bool bFlag)
+{
+	const unsigned int char_width  = 13;
+	uint8_t           *pFb0        = gFrameBuffer[Y] + X;
+	uint8_t           *pFb1        = pFb0 + 128;
+	bool               bCanDisplay = false;
+	unsigned int       i           = 0;
+	
+	// MHz
+	while (i < 3)
+	{
+		const unsigned int Digit = pDigits[i++];
+		if (bDisplayLeadingZero || bCanDisplay || Digit > 0)
+		{
+			bCanDisplay = true;
+			memmove(pFb0, gFontBigDigits[Digit],              char_width);
+			memmove(pFb1, gFontBigDigits[Digit] + char_width, char_width);
+		}
+		else
+		if (bFlag)
+		{
+			pFb0 -= 6;
+			pFb1 -= 6;
+		}
+		pFb0 += char_width;
+		pFb1 += char_width;
+	}
+
+	// decimal point
+	*pFb1 = 0x60; pFb0++; pFb1++;
+	*pFb1 = 0x60; pFb0++; pFb1++;
+	*pFb1 = 0x60; pFb0++; pFb1++;
+	
+	// kHz
+	while (i < 6)
+	{
+		const unsigned int Digit = pDigits[i++];
+		memmove(pFb0, gFontBigDigits[Digit],              char_width);
+		memmove(pFb1, gFontBigDigits[Digit] + char_width, char_width);
+		pFb0 += char_width;
+		pFb1 += char_width;
+	}
+}
+
+void UI_DisplayFrequencySmall(const char *pDigits, uint8_t X, uint8_t Y, bool bDisplayLeadingZero)
+{
+	const unsigned int char_width  = ARRAY_SIZE(gFontSmall[0]);
+	const unsigned int spacing     = 1 + char_width;
+	uint8_t           *pFb         = gFrameBuffer[Y] + X;
+	bool               bCanDisplay = false;
+	unsigned int       i           = 0;
+
+	// MHz
+	while (i < 3)
+	{
+		const unsigned int c = pDigits[i++];
+		if (bDisplayLeadingZero || bCanDisplay || c > 0)
+		{
+			#if 0
+				memmove(pFb + 1, gFontSmallDigits[c], char_width);
+			#else
+				const unsigned int index = (c < 10) ? '0' - 32 + c : '-' - 32;
+				memmove(pFb + 1, gFontSmall[index], char_width);
+			#endif
+			pFb += spacing;
+			bCanDisplay = true;
+		}
+	}
+
+	// decimal point
+	pFb++;
+	pFb++;
+	*pFb++ = 0x60;
+	*pFb++ = 0x60;
+	pFb++;
+
+	// kHz
+	while (i < 8)
+	{
+		const unsigned int c = pDigits[i++];
+		#if 0
+			memmove(pFb + 1, gFontSmallDigits[c], char_width);
+		#else
+			const unsigned int index = (c < 10) ? '0' - 32 + c : '-' - 32;
+			memmove(pFb + 1, gFontSmall[index], char_width);
+		#endif
+		pFb += spacing;
+	}
+}
+
+void UI_DisplaySmallDigits(const uint8_t size, const char *str, const uint8_t x, const uint8_t y, const bool display_leading_zeros)
+{
+	const unsigned int char_width  = ARRAY_SIZE(gFontSmall[0]);
+	const unsigned int spacing     = 1 + char_width;
+	bool               display     = display_leading_zeros;
+	unsigned int       xx;
+	unsigned int       i;
+	for (i = 0, xx = x; i < size; i++)
+	{
+		const unsigned int c = (unsigned int)str[i];
+		if (c > 0)
+			display = true;    // non '0'
+		if (display && c < 11)
+		{
+			#if 0
+				memmove(gFrameBuffer[y] + xx, gFontSmallDigits[c], char_width);
+			#else
+				const unsigned int index = (c < 10) ? '0' - 32 + c : '-' - 32;
+				memmove(gFrameBuffer[y] + xx + 1, gFontSmall[index], char_width);
+			#endif
+			xx += spacing;
+		}
+	}
+}

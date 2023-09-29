@@ -36,6 +36,7 @@ extern volatile uint16_t gBatterySave;
 
 extern uint16_t gBatteryCheckCounter;
 
+uint8_t BATTERY_VoltsToPercent(uint16_t voltage_10mV);
 void BATTERY_GetReadings(bool bDisplayBatteryLevel);
 
 #endif

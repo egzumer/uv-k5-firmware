@@ -44,6 +44,7 @@
 #include "driver/keyboard.h"
 #include "driver/st7565.h"
 #include "driver/system.h"
+#include "am_fix.h"
 #include "dtmf.h"
 #include "external/printf/printf.h"
 #include "frequencies.h"
@@ -57,12 +58,31 @@
 #endif
 #include "ui/battery.h"
 #include "ui/inputbox.h"
+#include "ui/main.h"
 #include "ui/menu.h"
 #include "ui/rssi.h"
 #include "ui/status.h"
 #include "ui/ui.h"
 
 static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld);
+
+static void updateRSSI(const int vfo)
+{
+	int16_t rssi = BK4819_GetRSSI();
+
+	#ifdef ENABLE_AM_FIX
+		// add RF gain adjust compensation
+		if (gEeprom.VfoInfo[vfo].IsAM && gSetting_AM_fix)
+			rssi -= rssi_gain_diff[vfo];
+	#endif
+	
+	if (gCurrentRSSI[vfo] == rssi)
+		return;     // no change
+	
+	gCurrentRSSI[vfo] = rssi;
+
+	UI_UpdateRSSI(rssi, vfo);
+}
 
 static void APP_CheckForIncoming(void)
 {
@@ -91,6 +111,10 @@ static void APP_CheckForIncoming(void)
 		}
 		gDualWatchCountdown = 100;
 		gScheduleDualWatch = false;
+
+		// let the user see DW is not active
+		gDualWatchActive = false;
+		gUpdateStatus    = true;
 	} else {
 		if (gRxReceptionMode != RX_MODE_NONE) {
 			FUNCTION_Select(FUNCTION_INCOMING);
@@ -139,6 +163,11 @@ static void APP_HandleIncoming(void)
 					gDualWatchCountdown = 500;
 					gScheduleDualWatch = false;
 					gRxReceptionMode = RX_MODE_LISTENING;
+
+					// let the user see DW is not active
+					gDualWatchActive = false;
+					gUpdateStatus    = true;
+
 					return;
 				}
 			}
@@ -191,7 +220,11 @@ static void APP_HandleReceive(void)
 	}
 
 	if (g_SquelchLost) {
+#ifdef ENABLE_NOAA
 		if (!gEndOfRxDetectedMaybe && IS_NOT_NOAA_CHANNEL(gRxVfo->CHANNEL_SAVE)) {
+#else
+		if (!gEndOfRxDetectedMaybe) {
+#endif
 			switch (gCurrentCodeType) {
 			case CODE_TYPE_OFF:
 				if (gEeprom.SQUELCH_LEVEL) {
@@ -301,7 +334,7 @@ static void APP_HandleFunction(void)
 	}
 }
 
-void APP_StartListening(FUNCTION_Type_t Function)
+void APP_StartListening(FUNCTION_Type_t Function, const bool reset_am_fix)
 {
 	if (!gSetting_KILLED) {
 #if defined(ENABLE_FMRADIO)
@@ -309,6 +342,12 @@ void APP_StartListening(FUNCTION_Type_t Function)
 			BK1080_Init(0, false);
 		}
 #endif
+
+	#ifdef ENABLE_AM_FIX
+		if (gEeprom.VfoInfo[gEeprom.RX_CHANNEL].IsAM && reset_am_fix)
+			AM_fix_reset(gEeprom.RX_CHANNEL);      // TODO: only reset it when moving channel/frequency
+	#endif
+
 		gVFO_RSSI_Level[gEeprom.RX_CHANNEL == 0] = 0;
 		GPIO_SetBit(&GPIOC->DATA, GPIOC_PIN_AUDIO_PATH);
 		gEnableSpeaker = true;
@@ -347,37 +386,86 @@ void APP_StartListening(FUNCTION_Type_t Function)
 			gRxVfoIsActive = true;
 			gDualWatchCountdown = 360;
 			gScheduleDualWatch = false;
+
+		// let the user see DW is not active
+		gDualWatchActive = false;
+		gUpdateStatus    = true;
 		}
-		if (gRxVfo->IsAM) {
-			BK4819_WriteRegister(BK4819_REG_48, 0xB3A8);
-			gNeverUsed = 0;
-		} else {
-			BK4819_WriteRegister(BK4819_REG_48, 0xB000
-					| (gEeprom.VOLUME_GAIN << 4)
-					| (gEeprom.DAC_GAIN << 0)
-					);
-		}
-		if (gVoiceWriteIndex == 0) {
-			if (gRxVfo->IsAM) {
-				BK4819_SetAF(BK4819_AF_AM);
-			} else {
-				BK4819_SetAF(BK4819_AF_OPEN);
+
+	// ******************************************
+	
+	// original setting
+	uint8_t lna_short = orig_lna_short;
+	uint8_t lna       = orig_lna;
+	uint8_t mixer     = orig_mixer;
+	uint8_t pga       = orig_pga;
+
+	if (gRxVfo->IsAM)
+	{	// AM
+/*
+		#ifndef ENABLE_AM_FIX
+			const uint32_t rx_frequency = gRxVfo->pRX->Frequency;
+
+			// the RX gain abrutly reduces above this frequency
+			// I guess this is (one of) the freq the hardware switches the front ends over ?
+			if (rx_frequency <= 22640000)
+			{	// decrease front end gain - AM demodulator saturates at a slightly higher signal level
+				lna_short = 3;   // 3 original
+				lna       = 2;   // 2 original
+				mixer     = 3;   // 3 original
+				pga       = 3;   // 6 original, 3 reduced
 			}
-		}
-		FUNCTION_Select(Function);
-		if (Function == FUNCTION_MONITOR
-#if defined(ENABLE_FMRADIO)
-			|| gFmRadioMode
-#endif
-			) {
-			GUI_SelectNextDisplay(DISPLAY_MAIN);
-			return;
-		}
-		gUpdateDisplay = true;
+			else
+			{	// increase the front end to compensate the reduced gain, but more gain decreases dynamic range :(
+				lna_short = 3;   // 3 original
+				lna       = 4;   // 2 original, 4 increased
+				mixer     = 3;   // 3 original
+				pga       = 7;   // 6 original, 7 increased
+			}
+		#endif
+*/
+		// what do these 4 other gain settings do ???
+		//BK4819_WriteRegister(BK4819_REG_12, 0x037B);  // 000000 11 011 11 011
+		//BK4819_WriteRegister(BK4819_REG_11, 0x027B);  // 000000 10 011 11 011
+		//BK4819_WriteRegister(BK4819_REG_10, 0x007A);  // 000000 00 011 11 010
+		//BK4819_WriteRegister(BK4819_REG_14, 0x0019);  // 000000 00 000 11 001
+
+		gNeverUsed = 0;
 	}
+
+	// apply the front end gain settings
+	BK4819_WriteRegister(BK4819_REG_13, ((uint16_t)lna_short << 8) | ((uint16_t)lna << 5) | ((uint16_t)mixer << 3) | ((uint16_t)pga << 0));
+
+	// ******************************************
+
+	// AF gain - original
+	BK4819_WriteRegister(BK4819_REG_48,
+		(11u << 12)                |     // ??? .. 0 to 15, doesn't seem to make any difference
+		( 0u << 10)                |     // AF Rx Gain-1
+		(gEeprom.VOLUME_GAIN << 4) |     // AF Rx Gain-2
+		(gEeprom.DAC_GAIN    << 0));     // AF DAC Gain (after Gain-1 and Gain-2)
+
+	#ifdef ENABLE_VOICE
+		if (gVoiceWriteIndex == 0)
+	#endif
+			BK4819_SetAF(gRxVfo->IsAM ? BK4819_AF_AM : BK4819_AF_OPEN);
+
+	FUNCTION_Select(Function);
+
+	#ifdef ENABLE_FMRADIO
+		if (Function == FUNCTION_MONITOR || gFmRadioMode)
+	#else
+		if (Function == FUNCTION_MONITOR)
+	#endif
+	{	// squelch is disabled
+		GUI_SelectNextDisplay(DISPLAY_MAIN);
+		return;
+	}
+
+	gUpdateDisplay = true;
 }
 
-void APP_SetFrequencyByStep(VFO_Info_t *pInfo, int8_t Step)
+uint32_t APP_SetFrequencyByStep(VFO_Info_t *pInfo, int8_t Step)
 {
 	uint32_t Frequency;
 
@@ -397,12 +485,12 @@ void APP_SetFrequencyByStep(VFO_Info_t *pInfo, int8_t Step)
 	}
 
 	if (Frequency > UpperLimitFrequencyBandTable[pInfo->Band]) {
-		pInfo->ConfigRX.Frequency = LowerLimitFrequencyBandTable[pInfo->Band];
+		Frequency = LowerLimitFrequencyBandTable[pInfo->Band];
 	} else if (Frequency < LowerLimitFrequencyBandTable[pInfo->Band]) {
-		pInfo->ConfigRX.Frequency = FREQUENCY_FloorToStep(UpperLimitFrequencyBandTable[pInfo->Band], pInfo->StepFrequency, LowerLimitFrequencyBandTable[pInfo->Band]);
-	} else {
-		pInfo->ConfigRX.Frequency = Frequency;
-	}
+		Frequency = FREQUENCY_FloorToStep(UpperLimitFrequencyBandTable[pInfo->Band], pInfo->StepFrequency, LowerLimitFrequencyBandTable[pInfo->Band]);
+	} 
+
+	return Frequency;
 }
 
 static void FREQ_NextChannel(void)
@@ -500,6 +588,12 @@ static void DUALWATCH_Alternate(void)
 #endif
 		gEeprom.RX_CHANNEL = gEeprom.RX_CHANNEL == 0;
 		gRxVfo = &gEeprom.VfoInfo[gEeprom.RX_CHANNEL];
+
+		if (!gDualWatchActive)
+		{	// let the user see DW is active
+			gDualWatchActive = true;
+			gUpdateStatus    = true;
+		}
 #if defined(ENABLE_NOAA)
 	}
 #endif
@@ -522,20 +616,46 @@ void APP_CheckRadioInterrupts(void)
 		uint16_t Mask;
 
 		BK4819_WriteRegister(BK4819_REG_02, 0);
-		Mask = BK4819_ReadRegister(BK4819_REG_02);
-		if (Mask & BK4819_REG_02_DTMF_5TONE_FOUND) {
-			gDTMF_RequestPending = true;
-			gDTMF_RecvTimeout = 5;
-			if (gDTMF_WriteIndex > 15) {
-				uint8_t i;
-				for (i = 0; i < sizeof(gDTMF_Received) - 1; i++) {
-					gDTMF_Received[i] = gDTMF_Received[i + 1];
+
+		// fetch the interrupt status bits
+		interrupt_status_bits = BK4819_ReadRegister(BK4819_REG_02);
+
+		// 0 = no phase shift
+		// 1 = 120deg phase shift
+		// 2 = 180deg phase shift
+		// 3 = 240deg phase shift
+//		const uint8_t ctcss_shift = BK4819_GetCTCShift();
+//		if (ctcss_shift > 0)
+//			g_CTCSS_Lost = true;
+
+		if (interrupt_status_bits & BK4819_REG_02_DTMF_5TONE_FOUND)
+		{	// save the new DTMF RX'ed character
+
+			// fetch the RX'ed char
+			const char c = DTMF_GetCharacter(BK4819_GetDTMF_5TONE_Code());
+			if (c != 0xff)
+			{
+				gDTMF_RequestPending = true;
+				gDTMF_RecvTimeout = 5;
+				if (gDTMF_WriteIndex >= sizeof(gDTMF_Received))
+					memmove(gDTMF_Received, &gDTMF_Received[1], gDTMF_WriteIndex-- - 1);
+				gDTMF_Received[gDTMF_WriteIndex++] = c;
+
+				if (gCurrentFunction == FUNCTION_RECEIVE)
+				{
+					{	// live DTMF decoder
+						gDTMF_RecvTimeoutSaved = 40;
+						size_t len = strlen(gDTMF_ReceivedSaved);
+						// shift the RX buffer down one - if need be
+						if (len >= (sizeof(gDTMF_ReceivedSaved) - 1))
+							memmove(gDTMF_ReceivedSaved, &gDTMF_ReceivedSaved[1], len--);
+						gDTMF_ReceivedSaved[len++] = c;
+						gDTMF_ReceivedSaved[len]   = '\0';
+						gUpdateDisplay = true;
+					}
+
+					DTMF_HandleRequest();
 				}
-				gDTMF_WriteIndex = 15;
-			}
-			gDTMF_Received[gDTMF_WriteIndex++] = DTMF_GetCharacter(BK4819_GetDTMF_5TONE_Code());
-			if (gCurrentFunction == FUNCTION_RECEIVE) {
-				DTMF_HandleRequest();
 			}
 		}
 		if (Mask & BK4819_REG_02_CxCSS_TAIL) {
@@ -565,6 +685,10 @@ void APP_CheckRadioInterrupts(void)
 				if (gEeprom.DUAL_WATCH != DUAL_WATCH_OFF && (gScheduleDualWatch || gDualWatchCountdown < 20)) {
 					gDualWatchCountdown = 20;
 					gScheduleDualWatch = false;
+
+					// let the user see DW is not active
+					gDualWatchActive = false;
+					gUpdateStatus    = true;
 				}
 			}
 		}
@@ -594,9 +718,28 @@ void APP_CheckRadioInterrupts(void)
 }
 
 void APP_EndTransmission(void)
-{
+{	// back to RX mode
+
 	RADIO_SendEndOfTransmission();
-	RADIO_EnableCxCSS();
+
+	if (gCurrentVfo->pTX->CodeType != CODE_TYPE_OFF)
+	{	// CTCSS/DCS is enabled
+
+		//if (gEeprom.TAIL_NOTE_ELIMINATION && gEeprom.REPEATER_TAIL_TONE_ELIMINATION > 0)
+		if (gEeprom.TAIL_NOTE_ELIMINATION)
+		{	// send the CTCSS/DCS tail tone - allows the receivers to mute the usual FM squelch tail/crash
+			RADIO_EnableCxCSS();
+		}
+		#if 0
+			else
+			{	// TX a short blank carrier
+				// this gives the receivers time to mute RX audio before we drop carrier
+				BK4819_ExitSubAu();
+				SYSTEM_DelayMs(200);
+			}
+		#endif
+	}
+
 	RADIO_SetupRegisters(false);
 }
 
@@ -654,10 +797,12 @@ static void APP_HandleVox(void)
 
 void APP_Update(void)
 {
+#ifdef ENABLE_VOICE
 	if (gFlagPlayQueuedVoice) {
 		AUDIO_PlayQueuedVoice();
 		gFlagPlayQueuedVoice = false;
 	}
+#endif
 
 	if (gCurrentFunction == FUNCTION_TRANSMIT && gTxTimeoutReached) {
 		gTxTimeoutReached = false;
@@ -675,21 +820,26 @@ void APP_Update(void)
 		APP_HandleFunction();
 	}
 #if defined(ENABLE_FMRADIO)
-	if (gFmRadioCountdown) {
+	if (gFmRadioMode && gFmRadioCountdown) {
 		return;
 	}
 #endif
 
-	if (gScreenToDisplay != DISPLAY_SCANNER && gScanState != SCAN_OFF && gScheduleScanListen && !gPttIsPressed && gVoiceWriteIndex == 0) {
+	#ifdef ENABLE_VOICE
+		if (gScreenToDisplay != DISPLAY_SCANNER && gScanState != SCAN_OFF && gScheduleScanListen && !gPttIsPressed && gVoiceWriteIndex == 0)
+	#else
+		if (gScreenToDisplay != DISPLAY_SCANNER && gScanState != SCAN_OFF && gScheduleScanListen && !gPttIsPressed)
+	#endif
+	{
 		if (IS_FREQ_CHANNEL(gNextMrChannel)) {
 			if (gCurrentFunction == FUNCTION_INCOMING) {
-				APP_StartListening(FUNCTION_RECEIVE);
+				APP_StartListening(gMonitor ? FUNCTION_MONITOR : FUNCTION_RECEIVE, true);
 			} else {
 				FREQ_NextChannel();
 			}
 		} else {
 			if (gCurrentCodeType == CODE_TYPE_OFF && gCurrentFunction == FUNCTION_INCOMING) {
-				APP_StartListening(FUNCTION_RECEIVE);
+				APP_StartListening(gMonitor ? FUNCTION_MONITOR : FUNCTION_RECEIVE, true);
 			} else {
 				MR_NextChannel();
 			}
@@ -699,13 +849,22 @@ void APP_Update(void)
 		gScheduleScanListen = false;
 	}
 
-	if (gCssScanMode == CSS_SCAN_MODE_SCANNING && gScheduleScanListen && gVoiceWriteIndex == 0) {
+	#ifdef ENABLE_VOICE
+		if (gCssScanMode == CSS_SCAN_MODE_SCANNING && gScheduleScanListen && gVoiceWriteIndex == 0)
+	#else
+		if (gCssScanMode == CSS_SCAN_MODE_SCANNING && gScheduleScanListen)
+	#endif
+	{
 		MENU_SelectNextCode();
 		gScheduleScanListen = false;
 	}
 
 #if defined(ENABLE_NOAA)
-	if (gEeprom.DUAL_WATCH == DUAL_WATCH_OFF && gIsNoaaMode && gScheduleNOAA && gVoiceWriteIndex == 0) {
+		#ifdef ENABLE_VOICE
+			if (gEeprom.DUAL_WATCH == DUAL_WATCH_OFF && gIsNoaaMode && gScheduleNOAA && gVoiceWriteIndex == 0)
+		#else
+			if (gEeprom.DUAL_WATCH == DUAL_WATCH_OFF && gIsNoaaMode && gScheduleNOAA)
+		#endif
 		NOAA_NextChannel();
 		RADIO_SetupRegisters(false);
 		gScheduleNOAA = false;
@@ -714,7 +873,11 @@ void APP_Update(void)
 #endif
 
 	if (gScreenToDisplay != DISPLAY_SCANNER && gEeprom.DUAL_WATCH != DUAL_WATCH_OFF) {
-		if (gScheduleDualWatch && gVoiceWriteIndex == 0) {
+		#ifdef ENABLE_VOICE
+			if (gScheduleDualWatch && gVoiceWriteIndex == 0)
+		#else
+			if (gScheduleDualWatch)
+		#endif
 			if (gScanState == SCAN_OFF && gCssScanMode == CSS_SCAN_MODE_OFF) {
 				if (!gPttIsPressed
 #if defined(ENABLE_FMRADIO)
@@ -769,7 +932,11 @@ void APP_Update(void)
 		gSchedulePowerSave = false;
 	}
 
-	if (gBatterySaveCountdownExpired && gCurrentFunction == FUNCTION_POWER_SAVE && gVoiceWriteIndex == 0) {
+	#ifdef ENABLE_VOICE
+		if (gPowerSaveCountdownExpired && gCurrentFunction == FUNCTION_POWER_SAVE && gVoiceWriteIndex == 0)
+	#else
+		if (gPowerSaveCountdownExpired && gCurrentFunction == FUNCTION_POWER_SAVE)
+	#endif
 		if (gRxIdleMode) {
 			BK4819_Conditional_RX_TurnOn_and_GPIO6_Enable();
 			if (gEeprom.VOX_SWITCH) {
@@ -783,8 +950,7 @@ void APP_Update(void)
 			gBatterySave = 10;
 			gRxIdleMode = false;
 		} else if (gEeprom.DUAL_WATCH == DUAL_WATCH_OFF || gScanState != SCAN_OFF || gCssScanMode != CSS_SCAN_MODE_OFF || gUpdateRSSI) {
-			gCurrentRSSI = BK4819_GetRSSI();
-			UI_UpdateRSSI(gCurrentRSSI);
+			updateRSSI(gEeprom.RX_CHANNEL);
 			gBatterySave = gEeprom.BATTERY_SAVE * 10;
 			gRxIdleMode = true;
 			BK4819_DisableVox();
@@ -814,27 +980,36 @@ void APP_CheckKeys(void)
 
 	if (gPttIsPressed) {
 		if (GPIO_CheckBit(&GPIOC->DATA, GPIOC_PIN_PTT)) {
-			SYSTEM_DelayMs(20);
-			if (GPIO_CheckBit(&GPIOC->DATA, GPIOC_PIN_PTT)) {
-				APP_ProcessKey(KEY_PTT, false, false);
-				gPttIsPressed = false;
-				if (gKeyReading1 != KEY_INVALID) {
-					gPttWasReleased = true;
+				if (++gPttDebounceCounter >= 3)	    // 30ms
+				{	// stop transmitting
+					APP_ProcessKey(KEY_PTT, false, false);
+					gPttIsPressed = false;
+					if (gKeyReading1 != KEY_INVALID)
+						gPttWasReleased = true;
 				}
 			}
+		else
+			gPttDebounceCounter = 0;
 		}
 	} else {
 		if (!GPIO_CheckBit(&GPIOC->DATA, GPIOC_PIN_PTT)) {
-			gPttDebounceCounter = gPttDebounceCounter + 1;
-			if (gPttDebounceCounter > 4) {
-				gPttIsPressed = true;
+			if (++gPttDebounceCounter >= 3)	    // 30ms
+			{	// start transmitting
+				boot_counter_10ms   = 0;
+				gPttDebounceCounter = 0;
+				gPttIsPressed       = true;
 				APP_ProcessKey(KEY_PTT, true, false);
 			}
-		} else {
-			gPttDebounceCounter = 0;
 		}
+		else
+			gPttDebounceCounter = 0;
+
 	}
 	Key = KEYBOARD_Poll();
+
+	if (Key != KEY_INVALID)
+		boot_counter_10ms = 0;   // cancel boot screen/beeps if any key pressed
+
 	if (gKeyReading0 != Key) {
 		if (gKeyReading0 != KEY_INVALID && Key != KEY_INVALID) {
 			APP_ProcessKey(gKeyReading1, false, gKeyBeingHeld);
@@ -856,7 +1031,20 @@ void APP_CheckKeys(void)
 		}
 		gKeyBeingHeld = false;
 	} else if (gDebounceCounter == 128) {
-		if (Key == KEY_STAR || Key == KEY_F || Key == KEY_SIDE2 || Key == KEY_SIDE1 || Key == KEY_UP || Key == KEY_DOWN) {
+	{	// initial delay after pressed
+		if (Key == KEY_STAR  ||
+		    Key == KEY_F     ||
+		    Key == KEY_SIDE2 ||
+		    Key == KEY_SIDE1 ||
+		    Key == KEY_UP    ||
+		    Key == KEY_DOWN  ||
+		    Key == KEY_EXIT  ||
+		    Key == KEY_MENU
+		    #ifdef ENABLE_MAIN_KEY_HOLD
+		        || Key <= KEY_9       // keys 0-9 can be held down to bypass pressing the F-Key
+		    #endif
+			)
+		{
 			gKeyBeingHeld = true;
 			APP_ProcessKey(Key, true, true);
 		}
@@ -878,6 +1066,17 @@ void APP_TimeSlice10ms(void)
 {
 	gFlashLightBlinkCounter++;
 
+	#ifdef ENABLE_BOOT_BEEPS
+		if (boot_counter_10ms > 0)
+			if ((boot_counter_10ms % 25) == 0)
+				AUDIO_PlayBeep(BEEP_880HZ_40MS_OPTIONAL);
+	#endif
+
+	#ifdef ENABLE_AM_FIX
+		if (gEeprom.VfoInfo[gEeprom.RX_CHANNEL].IsAM && gSetting_AM_fix)
+			AM_fix_10ms(gEeprom.RX_CHANNEL);
+	#endif
+
 #if defined(ENABLE_UART)
 	if (UART_IsCommandAvailable()) {
 		__disable_irq();
@@ -895,20 +1094,36 @@ void APP_TimeSlice10ms(void)
 	}
 
 	if (gCurrentFunction != FUNCTION_TRANSMIT) {
-		if (gUpdateStatus) {
-			UI_DisplayStatus();
-			gUpdateStatus = false;
-		}
-		if (gUpdateDisplay) {
-			GUI_DisplayScreen();
+		if (gUpdateStatus)
+			UI_DisplayStatus(false);
+
+		if (gUpdateDisplay)
+		{
 			gUpdateDisplay = false;
+			GUI_DisplayScreen();
 		}
+	}
+	else
+	{	// transmitting
+		#ifdef ENABLE_AUDIO_BAR
+			if (gSetting_mic_bar && (gFlashLightBlinkCounter % (150 / 10)) == 0) // once every 150ms
+				UI_DisplayAudioBar();
+		#endif
+
+		if (gUpdateDisplay)
+		{
+			gUpdateDisplay = false;
+			GUI_DisplayScreen();
+		}
+
+		if (gUpdateStatus)
+			UI_DisplayStatus(false);
 	}
 
 	// Skipping authentic device checks
 
 #if defined(ENABLE_FMRADIO)
-	if (gFmRadioCountdown) {
+	if (gFmRadioMode && gFmRadioCountdown) {
 		return;
 	}
 #endif
@@ -1051,6 +1266,7 @@ void APP_TimeSlice10ms(void)
 						if (gScanHitCount >= 2) {
 							gScanCssState = SCAN_CSS_STATE_FOUND;
 							gScanUseCssResult = true;
+							gUpdateStatus     = true;
 						}
 					} else {
 						gScanHitCount = 0;
@@ -1086,6 +1302,20 @@ void APP_TimeSlice10ms(void)
 	APP_CheckKeys();
 }
 
+void cancelUserInputModes(void)
+{
+	gKeyInputCountdown = 0;
+	if (gDTMF_InputMode || gInputBoxIndex > 0)
+	{
+		gDTMF_InputMode       = false;
+		gDTMF_InputIndex      = 0;
+		memset(gDTMF_String, 0, sizeof(gDTMF_String));
+		gInputBoxIndex        = 0;
+		gRequestDisplayScreen = DISPLAY_MAIN;
+		gBeepToPlay           = BEEP_1KHZ_60MS_OPTIONAL;
+	}
+}
+
 void APP_TimeSlice500ms(void)
 {
 	// Skipped authentic device check
@@ -1096,13 +1326,19 @@ void APP_TimeSlice500ms(void)
 			gUpdateDisplay = true;
 		}
 	}
+	if (gKeyInputCountdown > 0) {
+		gKeyInputCountdown--;
+		if (gKeyInputCountdown == 0)
+			cancelUserInputModes();
+	}
 
 	// Skipped authentic device check
 
 #if defined(ENABLE_FMRADIO)
 	if (gFmRadioCountdown) {
 		gFmRadioCountdown--;
-		return;
+		if (gFmRadioMode)           // 1of11
+			return;
 	}
 #endif
 
@@ -1130,9 +1366,14 @@ void APP_TimeSlice500ms(void)
 			}
 			BATTERY_GetReadings(true);
 		}
+
+		// regular statusbar updates (once every 2 sec) if need be
+		if ((gBatteryCheckCounter & 3) == 0)
+			if (gChargingWithTypeC || gSetting_battery_text > 0)
+				gUpdateStatus = true;
+
 		if (gCurrentFunction != FUNCTION_POWER_SAVE) {
-			gCurrentRSSI = BK4819_GetRSSI();
-			UI_UpdateRSSI(gCurrentRSSI);
+			updateRSSI(gEeprom.RX_CHANNEL);
 		}
 		if (
 #if defined(ENABLE_FMRADIO)
@@ -1140,16 +1381,21 @@ void APP_TimeSlice500ms(void)
 #endif
 			gCssScanMode == CSS_SCAN_MODE_OFF) {
 			if (gBacklightCountdown) {
-				gBacklightCountdown--;
-				if (gBacklightCountdown == 0) {
-					GPIO_ClearBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);
+				if (gScreenToDisplay != DISPLAY_MENU || gMenuCursor != MENU_ABR) { // don't turn off backlight if user is in backlight menu option
+					gBacklightCountdown--;
+					if (gBacklightCountdown == 0) {
+						if (gEeprom.BACKLIGHT < (ARRAY_SIZE(gSubMenu_BACKLIGHT) - 1))
+							GPIO_ClearBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);
+					}
 				}
 			}
-			if (gScanState == SCAN_OFF
-#if defined(ENABLE_AIRCOPY)
-				&& gScreenToDisplay != DISPLAY_AIRCOPY
-#endif
-				&& (gScreenToDisplay != DISPLAY_SCANNER || (gScanCssState >= SCAN_CSS_STATE_FOUND))) {
+
+			#ifdef ENABLE_AIRCOPY
+				if (gScanState == SCAN_OFF && gScreenToDisplay != DISPLAY_AIRCOPY && (gScreenToDisplay != DISPLAY_SCANNER || gScanCssState >= SCAN_CSS_STATE_FOUND))
+			#else
+				if (gScanState == SCAN_OFF && (gScreenToDisplay != DISPLAY_SCANNER || gScanCssState >= SCAN_CSS_STATE_FOUND))
+			#endif
+			{
 				if (gEeprom.AUTO_KEYPAD_LOCK && gKeyLockCountdown && !gDTMF_InputMode) {
 					gKeyLockCountdown--;
 					if (gKeyLockCountdown == 0) {
@@ -1160,6 +1406,11 @@ void APP_TimeSlice500ms(void)
 				if (gVoltageMenuCountdown) {
 					gVoltageMenuCountdown--;
 					if (gVoltageMenuCountdown == 0) {
+						if (gEeprom.BACKLIGHT == 0 && gScreenToDisplay == DISPLAY_MENU)
+						{
+							gBacklightCountdown = 0;
+							GPIO_ClearBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);	// turn the backlight OFF
+						}
 						if (gInputBoxIndex || gDTMF_InputMode || gScreenToDisplay == DISPLAY_MENU) {
 							AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL);
 						}
@@ -1176,15 +1427,21 @@ void APP_TimeSlice500ms(void)
 						gDTMF_InputIndex = 0;
 						gAskToSave = false;
 						gAskToDelete = false;
-#if defined(ENABLE_FMRADIO)
-						if (gFmRadioMode && gCurrentFunction != FUNCTION_RECEIVE && gCurrentFunction != FUNCTION_MONITOR && gCurrentFunction != FUNCTION_TRANSMIT) {
-							GUI_SelectNextDisplay(DISPLAY_FM);
-						} else {
-							GUI_SelectNextDisplay(DISPLAY_MAIN);
-						}
-#else
-						GUI_SelectNextDisplay(DISPLAY_MAIN);
-#endif
+
+						#ifdef ENABLE_FMRADIO
+							if (gFmRadioMode &&
+							    gCurrentFunction != FUNCTION_RECEIVE &&
+								gCurrentFunction != FUNCTION_MONITOR &&
+								gCurrentFunction != FUNCTION_TRANSMIT)
+							{
+								GUI_SelectNextDisplay(DISPLAY_FM);
+							}
+							else
+						#endif
+						#ifdef ENABLE_NO_SCAN_TIMEOUT
+							if (gScreenToDisplay != DISPLAY_SCANNER)
+						#endif
+								GUI_SelectNextDisplay(DISPLAY_MAIN);
 					}
 				}
 			}
@@ -1206,7 +1463,7 @@ void APP_TimeSlice500ms(void)
 
 	if (gLowBattery) {
 		gLowBatteryBlink = ++gLowBatteryCountdown & 1;
-		UI_DisplayBattery(gLowBatteryCountdown);
+		UI_DisplayBattery(0, gLowBatteryBlink);
 		if (gCurrentFunction != FUNCTION_TRANSMIT) {
 			if (gLowBatteryCountdown < 30) {
 				if (gLowBatteryCountdown == 29 && !gChargingWithTypeC) {
@@ -1216,16 +1473,24 @@ void APP_TimeSlice500ms(void)
 				gLowBatteryCountdown = 0;
 				if (!gChargingWithTypeC) {
 					AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP);
+#ifdef ENABLE_VOICE
 					AUDIO_SetVoiceID(0, VOICE_ID_LOW_VOLTAGE);
+#endif
 					if (gBatteryDisplayLevel == 0) {
+						#ifdef ENABLE_VOICE
 						AUDIO_PlaySingleVoice(true);
+						#endif
 						gReducedService = true;
 						FUNCTION_Select(FUNCTION_POWER_SAVE);
 						ST7565_Configure_GPIO_B11();
-						GPIO_ClearBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);
-					} else {
+						if (gEeprom.BACKLIGHT < (ARRAY_SIZE(gSubMenu_BACKLIGHT) - 1))
+							GPIO_ClearBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);
+					} 
+#ifdef ENABLE_VOICE
+					else {
 						AUDIO_PlaySingleVoice(false);
 					}
+#endif
 				}
 			}
 		}
@@ -1279,6 +1544,15 @@ void APP_TimeSlice500ms(void)
 			memset(gDTMF_Received, 0, sizeof(gDTMF_Received));
 		}
 	}
+	if (gDTMF_RecvTimeoutSaved > 0)
+	{
+		gDTMF_RecvTimeoutSaved--;
+		if (gDTMF_RecvTimeoutSaved == 0)
+		{
+			gDTMF_ReceivedSaved[0] = '\0';
+			gUpdateDisplay = true;
+		}
+	}
 }
 
 #if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
@@ -1324,7 +1598,16 @@ void CHANNEL_Next(bool bBackup, int8_t Direction)
 
 static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 {
-	bool bFlag;
+	bool bFlag = false;
+
+	const bool backlight_was_on = GPIO_CheckBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);
+
+	if (Key == KEY_EXIT && !backlight_was_on && gEeprom.BACKLIGHT > 0)
+	{	// just turn the light on for now so the user can see what's what
+		BACKLIGHT_TurnOn();
+		gBeepToPlay = BEEP_NONE;
+		return;
+	}
 
 	if (gCurrentFunction == FUNCTION_POWER_SAVE) {
 		FUNCTION_Select(FUNCTION_FOREGROUND);
@@ -1332,6 +1615,13 @@ static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 	gBatterySaveCountdown = 1000;
 	if (gEeprom.AUTO_KEYPAD_LOCK) {
 		gKeyLockCountdown = 30;
+	}
+	
+	if (Key == KEY_EXIT && bKeyPressed && bKeyHeld && gDTMF_ReceivedSaved[0] > 0)
+	{	// clear the live DTMF decoder if the EXIT key is held
+		gDTMF_RecvTimeoutSaved = 0;
+		gDTMF_ReceivedSaved[0] = '\0';
+		gUpdateDisplay         = true;
 	}
 	if (!bKeyPressed) {
 		if (gFlagSaveVfo) {
@@ -1374,47 +1664,54 @@ static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 		}
 	}
 
-	if (gEeprom.KEY_LOCK && gCurrentFunction != FUNCTION_TRANSMIT && Key != KEY_PTT) {
-		if (Key == KEY_F) {
-			if (!bKeyHeld) {
-				if (!bKeyPressed) {
-					return;
-				}
-				if (bKeyHeld) {
-					return;
-				}
+	if (gEeprom.KEY_LOCK && gCurrentFunction != FUNCTION_TRANSMIT && Key != KEY_PTT)
+	{	// keyboard is locked
+
+		if (Key == KEY_F)
+		{	// function/key-lock key
+
+			if (!bKeyPressed)
+				return;
+
+			if (!bKeyHeld)
+			{
+				// keypad is locked, tell the user
 				AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL);
-				gKeypadLocked = 4;
+				gKeypadLocked  = 4;      // 2 seconds
 				gUpdateDisplay = true;
 				return;
 			}
-			if (!bKeyPressed) {
+		}
+		else
+		if (Key != KEY_SIDE1 && Key != KEY_SIDE2)
+		{
+			if (!bKeyPressed || bKeyHeld)
 				return;
-			}
-		} else if (Key != KEY_SIDE1 && Key != KEY_SIDE2) {
-			if (!bKeyPressed) {
-				return;
-			}
-			if (bKeyHeld) {
-				return;
-			}
+
+			// keypad is locked, tell the user
 			AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL);
-			gKeypadLocked = 4;
+			gKeypadLocked  = 4;          // 2 seconds
 			gUpdateDisplay = true;
 			return;
 		}
 	}
 
-	if ((gScanState != SCAN_OFF && Key != KEY_PTT && Key != KEY_UP && Key != KEY_DOWN && Key != KEY_EXIT && Key != KEY_STAR) ||
-	    (gCssScanMode != CSS_SCAN_MODE_OFF && Key != KEY_PTT && Key != KEY_UP && Key != KEY_DOWN && Key != KEY_EXIT && Key != KEY_STAR && Key != KEY_MENU)) {
-		if (!bKeyPressed || bKeyHeld) {
+	if (Key != KEY_PTT   &&
+	    Key != KEY_UP    &&
+	    Key != KEY_DOWN  &&
+	    Key != KEY_EXIT  &&
+	    Key != KEY_SIDE1 &&
+	    Key != KEY_SIDE2 &&
+	    Key != KEY_STAR)
+	{
+		if (gScanState != SCAN_OFF || gCssScanMode != CSS_SCAN_MODE_OFF)
+		{	// frequency or CTCSS/DCS scanning
+			if (bKeyPressed && !bKeyHeld)
+				AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL);
 			return;
 		}
-		AUDIO_PlayBeep(BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL);
-		return;
 	}
 
-	bFlag = false;
 
 	if (gPttWasPressed && Key == KEY_PTT) {
 		bFlag = bKeyHeld;
@@ -1434,30 +1731,23 @@ static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 		}
 	}
 
-	if (gWasFKeyPressed && Key > KEY_9 && Key != KEY_F && Key != KEY_STAR) {
+	if (gWasFKeyPressed && Key > KEY_9 && Key != KEY_F && Key != KEY_STAR && Key != KEY_MENU)
+	{
 		gWasFKeyPressed = false;
 		gUpdateStatus = true;
 	}
 
-	if (gF_LOCK) {
-		if (Key == KEY_PTT) {
-			return;
-		}
-		if (Key == KEY_SIDE2) {
-			return;
-		}
-		if (Key == KEY_SIDE1) {
-			return;
-		}
-	}
+	if (gF_LOCK && (Key == KEY_PTT || Key == KEY_SIDE2 || Key == KEY_SIDE1))
+		return;
 
 	if (!bFlag) {
 		if (gCurrentFunction == FUNCTION_TRANSMIT) {
 #if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
-			if (gAlarmState == ALARM_STATE_OFF) {
-#else
-			if (1) {
-#endif
+
+			#ifdef ENABLE_ALARM
+				if (gAlarmState == ALARM_STATE_OFF)
+			#endif
+			{
 				if (Key == KEY_PTT) {
 					GENERIC_Key_PTT(bKeyPressed);
 				} else {
@@ -1496,8 +1786,10 @@ static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 						}
 					}
 				}
-			} else if (!bKeyHeld && bKeyPressed) {
+			}
 #if defined(ENABLE_ALARM) || defined(ENABLE_TX1750)
+			else if (!bKeyHeld && bKeyPressed) {
+
 				ALARM_Off();
 				if (gEeprom.REPEATER_TAIL_TONE_ELIMINATION == 0) {
 					FUNCTION_Select(FUNCTION_FOREGROUND);
@@ -1515,6 +1807,9 @@ static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 			switch (gScreenToDisplay) {
 			case DISPLAY_MAIN:
 				MAIN_ProcessKeys(Key, bKeyPressed, bKeyHeld);
+#ifdef ENABLE_MAIN_KEY_HOLD
+				bKeyHeld = false;	// allow the channel setting to be saved
+#endif
 				break;
 #if defined(ENABLE_FMRADIO)
 			case DISPLAY_FM:
@@ -1544,6 +1839,11 @@ static void APP_ProcessKey(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 		} else if (!bKeyHeld && bKeyPressed) {
 			gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
 		}
+	}
+	else
+	{
+		if (Key == KEY_EXIT && bKeyHeld)
+			cancelUserInputModes();
 	}
 
 Skip:
@@ -1632,6 +1932,8 @@ Skip:
 		gVFO_RSSI_Level[0] = 0;
 		gVFO_RSSI_Level[1] = 0;
 		gFlagReconfigureVfos = false;
+		if (gMonitor)
+			ACTION_Monitor();   // 1of11
 	}
 
 	if (gFlagRefreshSetting) {
@@ -1639,8 +1941,11 @@ Skip:
 		gFlagRefreshSetting = false;
 	}
 	if (gFlagStartScan) {
+		gMonitor = false;
+#ifdef ENABLE_VOICE
 		AUDIO_SetVoiceID(0, VOICE_ID_SCANNING_BEGIN);
 		AUDIO_PlaySingleVoice(true);
+#endif
 		SCANNER_Start();
 		gRequestDisplayScreen = DISPLAY_SCANNER;
 		gFlagStartScan = false;
@@ -1649,6 +1954,7 @@ Skip:
 		RADIO_PrepareTX();
 		gFlagPrepareTX = false;
 	}
+#ifdef ENABLE_VOICE
 	if (gAnotherVoiceID != VOICE_ID_INVALID) {
 		if (gAnotherVoiceID < 76) {
 			AUDIO_SetVoiceID(0, gAnotherVoiceID);
@@ -1656,6 +1962,7 @@ Skip:
 		AUDIO_PlaySingleVoice(false);
 		gAnotherVoiceID = VOICE_ID_INVALID;
 	}
+#endif
 	GUI_SelectNextDisplay(gRequestDisplayScreen);
 	gRequestDisplayScreen = DISPLAY_INVALID;
 }

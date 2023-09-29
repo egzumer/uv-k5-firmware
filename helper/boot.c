@@ -14,7 +14,9 @@
  *     limitations under the License.
  */
 
+#ifdef ENABLE_AIRCOPY
 #include "app/aircopy.h"
+#endif
 #include "bsp/dp32g030/gpio.h"
 #include "driver/bk4819.h"
 #include "driver/keyboard.h"
@@ -59,41 +61,49 @@ BOOT_Mode_t BOOT_GetMode(void)
 void BOOT_ProcessMode(BOOT_Mode_t Mode)
 {
 	if (Mode == BOOT_MODE_F_LOCK) {
+		// enable all the menu items
+		gMenuListCount = 0;
+//		while (MenuList[gMenuListCount].name != NULL)
+		while (MenuList[gMenuListCount].name[0] != '\0')
+			gMenuListCount++;
 		gMenuCursor = MENU_350TX;
 		gSubMenuSelection = gSetting_350TX;
 		GUI_SelectNextDisplay(DISPLAY_MENU);
-		gMenuListCount = 55;
-#if defined(ENABLE_ALARM)
-		gMenuListCount++;
-#endif
-#if defined(ENABLE_NOAA)
-		gMenuListCount++;
-#endif
-		gF_LOCK = true;
-#if defined(ENABLE_AIRCOPY)
-	} else if (Mode == BOOT_MODE_AIRCOPY) {
-		gEeprom.DUAL_WATCH = DUAL_WATCH_OFF;
-		gEeprom.BATTERY_SAVE = 0;
-		gEeprom.VOX_SWITCH = false;
-		gEeprom.CROSS_BAND_RX_TX = CROSS_BAND_OFF;
-		gEeprom.AUTO_KEYPAD_LOCK = false;
-		gEeprom.KEY_1_SHORT_PRESS_ACTION = 0;
-		gEeprom.KEY_1_LONG_PRESS_ACTION = 0;
-		gEeprom.KEY_2_SHORT_PRESS_ACTION = 0;
-		gEeprom.KEY_2_LONG_PRESS_ACTION = 0;
+		gF_LOCK            = true;
+	}
+	#ifdef ENABLE_AIRCOPY
+		else
+		if (Mode == BOOT_MODE_AIRCOPY)
+		{
+			gEeprom.DUAL_WATCH               = DUAL_WATCH_OFF;
+			gEeprom.BATTERY_SAVE             = 0;
+			gEeprom.VOX_SWITCH               = false;
+			gEeprom.CROSS_BAND_RX_TX         = CROSS_BAND_OFF;
+			gEeprom.AUTO_KEYPAD_LOCK         = false;
+			gEeprom.KEY_1_SHORT_PRESS_ACTION = 0;
+			gEeprom.KEY_1_LONG_PRESS_ACTION  = 0;
+			gEeprom.KEY_2_SHORT_PRESS_ACTION = 0;
+			gEeprom.KEY_2_LONG_PRESS_ACTION  = 0;
 
-		RADIO_InitInfo(gRxVfo, 205, 5, 41002500);
-		gRxVfo->CHANNEL_BANDWIDTH = BANDWIDTH_NARROW;
-		gRxVfo->OUTPUT_POWER = 0;
-		RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
-		gCurrentVfo = gRxVfo;
-		RADIO_SetupRegisters(true);
-		BK4819_SetupAircopy();
-		BK4819_ResetFSK();
-		gAircopyState = AIRCOPY_READY;
-		GUI_SelectNextDisplay(DISPLAY_AIRCOPY);
-#endif
-	} else {
+			RADIO_InitInfo(gRxVfo, FREQ_CHANNEL_LAST - 1, 5, 41002500);
+
+			gRxVfo->CHANNEL_BANDWIDTH        = BANDWIDTH_NARROW;
+			gRxVfo->OUTPUT_POWER             = 0;
+
+			RADIO_ConfigureSquelchAndOutputPower(gRxVfo);
+
+			gCurrentVfo = gRxVfo;
+
+			RADIO_SetupRegisters(true);
+			BK4819_SetupAircopy();
+			BK4819_ResetFSK();
+
+			gAircopyState = AIRCOPY_READY;
+			GUI_SelectNextDisplay(DISPLAY_AIRCOPY);
+		}
+	#endif
+	else
+	{
 		GUI_SelectNextDisplay(DISPLAY_MAIN);
 	}
 }

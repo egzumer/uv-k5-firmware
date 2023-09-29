@@ -14,15 +14,16 @@
  *     limitations under the License.
  */
 
+#ifdef ENABLE_FMRADIO
+
 #include <string.h>
+
 #include "app/action.h"
 #include "app/fm.h"
 #include "app/generic.h"
 #include "audio.h"
 #include "bsp/dp32g030/gpio.h"
-#if defined(ENABLE_FMRADIO)
 #include "driver/bk1080.h"
-#endif
 #include "driver/eeprom.h"
 #include "driver/gpio.h"
 #include "functions.h"
@@ -254,7 +255,9 @@ static void FM_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 						return;
 					}
 					gEeprom.FM_SelectedFrequency = (uint16_t)Frequency;
-					gAnotherVoiceID = (VOICE_ID_t)Key;
+					#ifdef ENABLE_VOICE
+						gAnotherVoiceID = (VOICE_ID_t)Key;
+					#endif
 					gEeprom.FM_FrequencyPlaying = gEeprom.FM_SelectedFrequency;
 					BK1080_SetFrequency(gEeprom.FM_FrequencyPlaying);
 					gRequestSaveFM = true;
@@ -267,7 +270,9 @@ static void FM_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 				Channel = ((gInputBox[0] * 10) + gInputBox[1]) - 1;
 				if (State == STATE_MR_MODE) {
 					if (FM_CheckValidChannel(Channel)) {
-						gAnotherVoiceID = (VOICE_ID_t)Key;
+						#ifdef ENABLE_VOICE
+							gAnotherVoiceID = (VOICE_ID_t)Key;
+						#endif
 						gEeprom.FM_SelectedChannel = Channel;
 						gEeprom.FM_FrequencyPlaying = gFM_Channels[Channel];
 						BK1080_SetFrequency(gEeprom.FM_FrequencyPlaying);
@@ -275,7 +280,9 @@ static void FM_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 						return;
 					}
 				} else if (Channel < 20) {
-					gAnotherVoiceID = (VOICE_ID_t)Key;
+					#ifdef ENABLE_VOICE
+						gAnotherVoiceID = (VOICE_ID_t)Key;
+					#endif
 					gRequestDisplayScreen = DISPLAY_FM;
 					gInputBoxIndex = 0;
 					gFM_ChannelPosition = Channel;
@@ -284,7 +291,9 @@ static void FM_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 				gBeepToPlay = BEEP_500HZ_60MS_DOUBLE_BEEP_OPTIONAL;
 				return;
 			}
-			gAnotherVoiceID = (VOICE_ID_t)Key;
+			#ifdef ENABLE_VOICE
+				gAnotherVoiceID = (VOICE_ID_t)Key;
+			#endif
 			return;
 		}
 		gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
@@ -353,10 +362,14 @@ static void FM_Key_EXIT(bool bKeyPressed, bool bKeyHeld)
 			}
 			gInputBoxIndex = 0;
 		}
-		gAnotherVoiceID = VOICE_ID_CANCEL;
+		#ifdef ENABLE_VOICE
+			gAnotherVoiceID = VOICE_ID_CANCEL;
+		#endif
 	} else {
 		FM_PlayAndUpdate();
-		gAnotherVoiceID = VOICE_ID_SCANNING_STOP;
+		#ifdef ENABLE_VOICE
+			gAnotherVoiceID = VOICE_ID_SCANNING_STOP;
+		#endif
 	}
 	gRequestDisplayScreen = DISPLAY_FM;
 }
@@ -544,3 +557,4 @@ void FM_Start(void)
 	gUpdateStatus = true;
 }
 
+#endif

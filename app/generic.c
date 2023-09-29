@@ -152,9 +152,14 @@ void GENERIC_Key_PTT(bool bKeyPressed)
 						if (gDTMF_InputIndex == 3) {
 							gDTMF_CallMode = DTMF_CheckGroupCall(gDTMF_InputBox, 3);
 						} else {
-							gDTMF_CallMode = DTMF_CALL_MODE_DTMF;
+							// append our DTMF ID to the inputted DTMF code -
+							//  IF the user inputted code is exactly 3 digits long and D-DCD is enabled
+							if (gDTMF_InputIndex == 3 && gTxVfo->DTMF_DECODING_ENABLE > 0)
+								gDTMF_CallMode = DTMF_CheckGroupCall(gDTMF_InputBox, 3);
+							else
+								gDTMF_CallMode = DTMF_CALL_MODE_DTMF;
 						}
-						sprintf(gDTMF_String, "%s", gDTMF_InputBox);
+						strcpy(gDTMF_String, gDTMF_InputBox);
 						gDTMF_PreviousIndex = gDTMF_InputIndex;
 						gDTMF_ReplyState = DTMF_REPLY_ANI;
 						gDTMF_State = DTMF_STATE_0;
@@ -185,7 +190,9 @@ void GENERIC_Key_PTT(bool bKeyPressed)
 		gRequestDisplayScreen = DISPLAY_FM;
 #endif
 	}
+#ifdef ENABLE_VOICE
 	gAnotherVoiceID = VOICE_ID_SCANNING_STOP;
+#endif
 	gPttWasPressed = true;
 }
 

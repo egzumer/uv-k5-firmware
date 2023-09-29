@@ -14,7 +14,10 @@
  *     limitations under the License.
  */
 
+#ifdef ENABLE_AIRCOPY
+
 #include <string.h>
+
 #include "app/aircopy.h"
 #include "driver/st7565.h"
 #include "external/printf/printf.h"
@@ -37,12 +40,12 @@ void UI_DisplayAircopy(void)
 	} else {
 		strcpy(String, "AIR COPY(CMP)");
 	}
-	UI_PrintString(String, 2, 127, 0, 8, true);
+	UI_PrintString(String, 2, 127, 0, 8);
 
 	if (gInputBoxIndex == 0) {
 		NUMBER_ToDigits(gRxVfo->ConfigRX.Frequency, String);
 		UI_DisplayFrequency(String, 16, 2, 0, 0);
-		UI_DisplaySmallDigits(2, String + 6, 97, 3);
+		UI_DisplaySmallDigits(2, String + 6, 97, 3, true);
 	} else {
 		UI_DisplayFrequency(gInputBox, 16, 2, 1, 0);
 	}
@@ -54,7 +57,8 @@ void UI_DisplayAircopy(void)
 	} else if (gAirCopyIsSendMode == 1) {
 		sprintf(String, "SND:%d", gAirCopyBlockNumber);
 	}
-	UI_PrintString(String, 2, 127, 4, 8, true);
+	UI_PrintString(String, 2, 127, 4, 8);
 	ST7565_BlitFullScreen();
 }
 
+#endif

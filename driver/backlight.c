@@ -19,13 +19,39 @@
 #include "driver/gpio.h"
 #include "settings.h"
 
-uint8_t gBacklightCountdown;
+uint16_t gBacklightCountdown = 0;
 
 void BACKLIGHT_TurnOn(void)
 {
 	if (gEeprom.BACKLIGHT) {
 		GPIO_SetBit(&GPIOB->DATA, GPIOB_PIN_BACKLIGHT);
-		gBacklightCountdown = 1 + (gEeprom.BACKLIGHT * 2);
+		switch (gEeprom.BACKLIGHT)
+		{
+			default:
+			case 1:	// 5 sec
+				gBacklightCountdown = 5;
+				break;
+			case 2:	// 10 sec
+				gBacklightCountdown = 10;
+				break;
+			case 3:	// 20 sec
+				gBacklightCountdown = 20;
+				break;
+			case 4:	// 1 min
+				gBacklightCountdown = 60;
+				break;
+			case 5:	// 2 min
+				gBacklightCountdown = 60 * 2;
+				break;
+			case 6:	// 4 min
+				gBacklightCountdown = 60 * 4;
+				break;
+			case 7:	// always on
+				gBacklightCountdown = 0;
+				break;
+		}
+
+		gBacklightCountdown *= 2;
 	}
 }
 

@@ -20,8 +20,17 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-enum {
-	MENU_SQL		= 0,
+#include "audio.h"     // VOICE_ID_t
+
+typedef struct {
+	const char  name[7];    // menu display area only has room for 6 characters
+	VOICE_ID_t  voice_id;
+	uint8_t     menu_id;
+} t_menu_item;
+
+enum
+{
+	MENU_SQL = 0,
 	MENU_STEP,
 	MENU_TXP,
 	MENU_R_DCS,
@@ -30,33 +39,43 @@ enum {
 	MENU_T_CTCS,
 	MENU_SFT_D,
 	MENU_OFFSET,
+	MENU_XB,
+	MENU_TOT,
 	MENU_W_N,
 	MENU_SCR,
 	MENU_BCL,
 	MENU_MEM_CH,
+	MENU_DEL_CH,
+	MENU_MEM_NAME,
+	MENU_MDF,
 	MENU_SAVE,
 	MENU_VOX,
 	MENU_ABR,
 	MENU_TDR,
-	MENU_WX,
 	MENU_BEEP,
-	MENU_TOT,
-	MENU_VOICE,
+	#ifdef ENABLE_VOICE
+		MENU_VOICE,
+	#endif
 	MENU_SC_REV,
-	MENU_MDF,
 	MENU_AUTOLK,
 	MENU_S_ADD1,
 	MENU_S_ADD2,
 	MENU_STE,
 	MENU_RP_STE,
 	MENU_MIC,
+	#ifdef ENABLE_AUDIO_BAR
+		MENU_MIC_BAR,
+	#endif
+	#ifdef ENABLE_COMPANDER
+		MENU_COMPAND,
+	#endif
 	MENU_1_CALL,
 	MENU_S_LIST,
 	MENU_SLIST1,
 	MENU_SLIST2,
-#if defined(ENABLE_ALARM)
-	MENU_AL_MOD,
-#endif
+	#ifdef ENABLE_ALARM
+		MENU_AL_MOD,
+	#endif
 	MENU_ANI_ID,
 	MENU_UPCODE,
 	MENU_DWCODE,
@@ -67,28 +86,78 @@ enum {
 	MENU_PTT_ID,
 	MENU_D_DCD,
 	MENU_D_LIST,
+	MENU_D_LIVE_DEC,
 	MENU_PONMSG,
 	MENU_ROGER,
 	MENU_VOL,
+	MENU_BAT_TXT,
 	MENU_AM,
-#if defined(ENABLE_NOAA)
-	MENU_NOAA_S,
-#endif
-	MENU_DEL_CH,
+	#ifdef ENABLE_AM_FIX
+		MENU_AM_FIX,
+	#endif
+	#ifdef ENABLE_AM_FIX_TEST1
+		MENU_AM_FIX_TEST1,
+	#endif
+	#ifdef ENABLE_NOAA
+		MENU_NOAA_S,
+	#endif
 	MENU_RESET,
-	MENU_350TX,
+
+	// items after here are normally hidden
+
 	MENU_F_LOCK,
 	MENU_200TX,
+	MENU_350TX,
 	MENU_500TX,
-	MENU_ALL_TX,
+	MENU_350EN,
 	MENU_SCREN,
+
+	MENU_TX_EN,   // enable TX
+	MENU_F_CALI   // reference xtal calibration
 };
 
-extern bool gIsInSubMenu;
+extern const t_menu_item MenuList[];
 
-extern uint8_t gMenuCursor;
-extern int8_t gMenuScrollDirection;
-extern uint32_t gSubMenuSelection;
+extern const char        gSubMenu_TXP[3][5];
+extern const char        gSubMenu_SFT_D[3][4];
+extern const char        gSubMenu_W_N[2][7];
+extern const char        gSubMenu_OFF_ON[2][4];
+extern const char        gSubMenu_SAVE[5][4];
+extern const char        gSubMenu_CHAN[3][7];
+#ifdef ENABLE_VOICE
+	extern const char    gSubMenu_VOICE[3][4];
+#endif
+extern const char        gSubMenu_SC_REV[3][3];
+extern const char        gSubMenu_MDF[4][8];
+#ifdef ENABLE_ALARM
+	extern const char    gSubMenu_AL_MOD[2][5];
+#endif
+extern const char        gSubMenu_D_RSP[4][6];
+extern const char        gSubMenu_PTT_ID[4][5];
+extern const char        gSubMenu_PONMSG[4][5];
+extern const char        gSubMenu_ROGER[3][6];
+extern const char        gSubMenu_RESET[2][4];
+extern const char        gSubMenu_F_LOCK[6][4];
+extern const char        gSubMenu_BACKLIGHT[8][7];
+#ifdef ENABLE_COMPANDER
+	extern const char    gSubMenu_Compand[4][6];
+#endif
+#ifdef ENABLE_AM_FIX_TEST1
+	extern const char    gSubMenu_AM_fix_test1[4][8];
+#endif
+extern const char        gSubMenu_BAT_TXT[3][8];
+
+extern const char        gSubMenu_SCRAMBLER[11][7];
+				         
+extern bool              gIsInSubMenu;
+				         
+extern uint8_t           gMenuCursor;
+extern int8_t            gMenuScrollDirection;
+extern int32_t           gSubMenuSelection;
+				         
+extern char              edit_original[17];
+extern char              edit[17];
+extern int               edit_index;
 
 void UI_DisplayMenu(void);
 

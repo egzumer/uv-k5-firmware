@@ -15,19 +15,56 @@
  */
 
 #include <string.h>
+#include <stdlib.h>  // abs()
+
 #include "bitmaps.h"
 #include "driver/st7565.h"
+#include "external/printf/printf.h"
 #include "functions.h"
 #include "misc.h"
 #include "settings.h"
+#include "ui/helper.h"
 #include "ui/rssi.h"
 #include "ui/ui.h"
 
+#ifdef ENABLE_DBM
+
+void UI_UpdateRSSI(const int16_t rssi, const int vfo)
+{
+	// dBm
+	//
+	// this doesn't yet quite fit into the available screen space
+	// I suppose the '-' sign could be dropped
+
+	char s[8];
+	const uint8_t line = (vfo == 0) ? 3 : 7;
+
+	if (gEeprom.KEY_LOCK && gKeypadLocked > 0)
+		return;    // the screen is currently in use
+	
+	gVFO_RSSI[vfo]           = rssi;
+	gVFO_RSSI_Level[vfo] = 0;
+
+	{	// drop the '.5' bit
+		const int16_t dBm = (rssi / 2) - 160;
+		sprintf(s, "%-3d", dBm);
+//		sprintf(s, "%3d", abs(dBm));
+	}
+	else
+		strcpy(s, "    ");
+
+	UI_PrintStringSmall(s, 2, 0, line);
+}
+
+#else
+	
 static void Render(uint8_t RssiLevel, uint8_t VFO)
 {
 	uint8_t *pLine;
 	uint8_t Line;
-	bool bIsClearMode;
+
+	if (gEeprom.KEY_LOCK && gKeypadLocked > 0)
+		return;    // the screen is currently in use
 
 	if (gCurrentFunction == FUNCTION_TRANSMIT || gScreenToDisplay != DISPLAY_MAIN) {
 		return;
@@ -44,50 +81,71 @@ static void Render(uint8_t RssiLevel, uint8_t VFO)
 	memset(pLine, 0, 23);
 	if (RssiLevel == 0) {
 		pLine = NULL;
-		bIsClearMode = true;
 	} else {
 		memcpy(pLine, BITMAP_Antenna, 5);
-		memcpy(pLine + 5, BITMAP_AntennaLevel1, sizeof(BITMAP_AntennaLevel1));
-		if (RssiLevel >= 2) {
+		if (rssi_level >= 2)
+			memcpy(pLine + 5, BITMAP_AntennaLevel1, sizeof(BITMAP_AntennaLevel1));
+		if (RssiLevel >= 3) {
 			memcpy(pLine + 8, BITMAP_AntennaLevel2, sizeof(BITMAP_AntennaLevel2));
 		}
-		if (RssiLevel >= 3) {
+		if (RssiLevel >= 4) {
 			memcpy(pLine + 11, BITMAP_AntennaLevel3, sizeof(BITMAP_AntennaLevel3));
 		}
-		if (RssiLevel >= 4) {
+		if (RssiLevel >= 5) {
 			memcpy(pLine + 14, BITMAP_AntennaLevel4, sizeof(BITMAP_AntennaLevel4));
 		}
-		if (RssiLevel >= 5) {
+		if (RssiLevel >= 6) {
 			memcpy(pLine + 17, BITMAP_AntennaLevel5, sizeof(BITMAP_AntennaLevel5));
 		}
-		if (RssiLevel >= 6) {
+		if (RssiLevel >= 7) {
 			memcpy(pLine + 20, BITMAP_AntennaLevel6, sizeof(BITMAP_AntennaLevel6));
 		}
-		bIsClearMode = false;
 	}
 
-	ST7565_DrawLine(0, Line, 23 , pLine, bIsClearMode);
+	ST7565_DrawLine(0, Line, 23, pLine);
 }
 
-void UI_UpdateRSSI(uint16_t RSSI)
+void UI_UpdateRSSI(const int16_t rssi, const int vfo)
 {
-	uint8_t Level;
+	gVFO_RSSI[vfo] = rssi;
+	
+	//const int16_t dBm = (rssi / 2) - 160;
 
-	if (RSSI >= gEEPROM_RSSI_CALIB[gRxVfo->Band][3]) {
-		Level = 6;
-	} else if (RSSI >= gEEPROM_RSSI_CALIB[gRxVfo->Band][2]) {
-		Level = 4;
-	} else if (RSSI >= gEEPROM_RSSI_CALIB[gRxVfo->Band][1]) {
-		Level = 2;
-	} else if (RSSI >= gEEPROM_RSSI_CALIB[gRxVfo->Band][0]) {
-		Level = 1;
-	} else {
-		Level = 0;
-	}
+	#if 0
+		const unsigned int band = gRxVfo->Band;
+		const int16_t level0  = gEEPROM_RSSI_CALIB[band][0];
+		const int16_t level1  = gEEPROM_RSSI_CALIB[band][1];
+		const int16_t level2  = gEEPROM_RSSI_CALIB[band][2];
+		const int16_t level3  = gEEPROM_RSSI_CALIB[band][3];
+	#else
+		const int16_t level0  = (-115 + 160) * 2;   // dB
+		const int16_t level1  = ( -89 + 160) * 2;   // dB
+		const int16_t level2  = ( -64 + 160) * 2;   // dB
+		const int16_t level3  = ( -39 + 160) * 2;   // dB
+	#endif
+	const int16_t level01 = (level0 + level1) / 2;
+	const int16_t level12 = (level1 + level2) / 2;
+	const int16_t level23 = (level2 + level3) / 2;
+	
+	uint8_t Level = 0;
 
-	if (gVFO_RSSI_Level[gEeprom.RX_CHANNEL] != Level) {
-		gVFO_RSSI_Level[gEeprom.RX_CHANNEL] = Level;
-		Render(Level, gEeprom.RX_CHANNEL);
+	if (rssi >= level3)  Level = 7;
+	else
+	if (rssi >= level23) Level = 6;
+	else
+	if (rssi >= level2)  Level = 5;
+	else
+	if (rssi >= level12) Level = 4;
+	else
+	if (rssi >= level1)  Level = 3;
+	else
+	if (rssi >= level01) Level = 2;
+	else
+	if (rssi >= level0)  Level = 1;
+
+	if (gVFO_RSSI_Level[vfo] != Level) {
+		gVFO_RSSI_Level[vfo] = Level;
+		Render(Level, vfo);
 	}
 }
 

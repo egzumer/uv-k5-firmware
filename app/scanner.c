@@ -53,13 +53,17 @@ static void SCANNER_Key_DIGITS(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 			INPUTBOX_Append(Key);
 			gRequestDisplayScreen = DISPLAY_SCANNER;
 			if (gInputBoxIndex < 3) {
+#ifdef ENABLE_VOICE
 				gAnotherVoiceID = (VOICE_ID_t)Key;
+#endif
 				return;
 			}
 			gInputBoxIndex = 0;
 			Channel = ((gInputBox[0] * 100) + (gInputBox[1] * 10) + gInputBox[2]) - 1;
 			if (IS_MR_CHANNEL(Channel)) {
+				#ifdef ENABLE_VOICE
 				gAnotherVoiceID = (VOICE_ID_t)Key;
+				#endif
 				gShowChPrefix = RADIO_CheckValidChannel(Channel, false, 0);
 				gScanChannel = (uint8_t)Channel;
 				return;
@@ -82,7 +86,9 @@ static void SCANNER_Key_EXIT(bool bKeyPressed, bool bKeyHeld)
 			gFlagStopScan = true;
 			gVfoConfigureMode = VFO_CONFIGURE_RELOAD;
 			gFlagResetVfos = true;
+#ifdef ENABLE_VOICE
 			gAnotherVoiceID = VOICE_ID_CANCEL;
+#endif
 			break;
 
 		case 1:
@@ -96,7 +102,9 @@ static void SCANNER_Key_EXIT(bool bKeyPressed, bool bKeyHeld)
 
 		case 2:
 			gScannerEditState = 0;
+#ifdef ENABLE_VOICE
 			gAnotherVoiceID = VOICE_ID_CANCEL;
+#endif
 			gRequestDisplayScreen = DISPLAY_SCANNER;
 			break;
 		}
@@ -168,7 +176,9 @@ static void SCANNER_Key_MENU(bool bKeyPressed, bool bKeyHeld)
 			gScannerEditState = 2;
 		}
 		gScanCssState = SCAN_CSS_STATE_FOUND;
+#ifdef ENABLE_VOICE
 		gAnotherVoiceID = VOICE_ID_MEMORY_CHANNEL;
+#endif
 		gRequestDisplayScreen = DISPLAY_SCANNER;
 		break;
 
@@ -207,7 +217,9 @@ static void SCANNER_Key_MENU(bool bKeyPressed, bool bKeyHeld)
 		}
 		gTxVfo->CHANNEL_SAVE = Channel;
 		gEeprom.ScreenChannel[gEeprom.TX_CHANNEL] = Channel;
+#ifdef ENABLE_VOICE
 		gAnotherVoiceID = VOICE_ID_CONFIRM;
+#endif
 		gRequestDisplayScreen = DISPLAY_SCANNER;
 		gRequestSaveChannel = 2;
 		gScannerEditState = 0;
@@ -242,7 +254,7 @@ static void SCANNER_Key_UP_DOWN(bool bKeyPressed, bool pKeyHeld, int8_t Directio
 		gBeepToPlay = BEEP_1KHZ_60MS_OPTIONAL;
 	}
 	if (gScannerEditState == 1) {
-		gScanChannel = NUMBER_AddWithWraparound(gScanChannel, Direction, 0, 199);
+		gScanChannel          = NUMBER_AddWithWraparound(gScanChannel, Direction, 0, MR_CHANNEL_LAST);
 		gShowChPrefix = RADIO_CheckValidChannel(gScanChannel, false, 0);
 		gRequestDisplayScreen = DISPLAY_SCANNER;
 	} else {
@@ -317,6 +329,7 @@ void SCANNER_Start(void)
 		gStepSetting = gRxVfo->STEP_SETTING;
 		BK4819_PickRXFilterPathBasedOnFrequency(gScanFrequency);
 		BK4819_SetScanFrequency(gScanFrequency);
+		gUpdateStatus = true;
 	} else {
 		gScanCssState = SCAN_CSS_STATE_OFF;
 		gScanFrequency = 0xFFFFFFFF;
@@ -369,5 +382,6 @@ void SCANNER_Stop(void)
 	}
 
 	SETTINGS_SaveVfoIndices();
+	gUpdateStatus = true;
 }
 

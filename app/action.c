@@ -23,7 +23,9 @@
 #include "app/scanner.h"
 #include "audio.h"
 #include "bsp/dp32g030/gpio.h"
-#include "driver/bk1080.h"
+#if defined(ENABLE_FMRADIO)
+	#include "driver/bk1080.h"
+#endif
 #include "driver/bk4819.h"
 #include "driver/gpio.h"
 #include "functions.h"
@@ -55,7 +57,11 @@ void ACTION_Power(void)
 	}
 
 	gRequestSaveChannel = 1;
-	gAnotherVoiceID = VOICE_ID_POWER;
+
+	#ifdef ENABLE_VOICE
+		gAnotherVoiceID   = VOICE_ID_POWER;
+	#endif
+
 	gRequestDisplayScreen = gScreenToDisplay;
 }
 
@@ -69,9 +75,12 @@ static void ACTION_Monitor(void)
 		}
 #endif
 		RADIO_SetupRegisters(true);
-		APP_StartListening(FUNCTION_MONITOR);
+		APP_StartListening(FUNCTION_MONITOR, false);
 		return;
 	}
+
+	gMonitor = false;
+	
 	if (gScanState != SCAN_OFF) {
 		ScanPauseDelayIn10msec = 500;
 		gScheduleScanListen = false;
@@ -104,9 +113,14 @@ void ACTION_Scan(bool bRestart)
 			uint16_t Frequency;
 
 			GUI_SelectNextDisplay(DISPLAY_FM);
+
+				gMonitor = false;
+
 			if (gFM_ScanState != FM_SCAN_OFF) {
 				FM_PlayAndUpdate();
+#ifdef ENABLE_VOICE
 				gAnotherVoiceID = VOICE_ID_SCANNING_STOP;
+#endif
 			} else {
 				if (bRestart) {
 					gFM_AutoScan = true;
@@ -123,21 +137,51 @@ void ACTION_Scan(bool bRestart)
 				gAnotherVoiceID = VOICE_ID_SCANNING_BEGIN;
 			}
 		}
-	} else
+	}
 #endif
 	if (gScreenToDisplay != DISPLAY_SCANNER) {
+
+		gMonitor = false;
+
 		RADIO_SelectVfos();
+#ifdef ENABLE_NOAA
 		if (IS_NOT_NOAA_CHANNEL(gRxVfo->CHANNEL_SAVE)) {
+#endif
 			GUI_SelectNextDisplay(DISPLAY_MAIN);
 			if (gScanState != SCAN_OFF) {
 				SCANNER_Stop();
+#ifdef ENABLE_VOICE
 				gAnotherVoiceID = VOICE_ID_SCANNING_STOP;
+#endif
 			} else {
 				CHANNEL_Next(true, 1);
+#ifdef ENABLE_VOICE
 				AUDIO_SetVoiceID(0, VOICE_ID_SCANNING_BEGIN);
 				AUDIO_PlaySingleVoice(true);
+#endif
+
+				// clear the other vfo's rssi level (to hide the antenna symbol)
+				gVFO_RSSI_bar_level[gEeprom.RX_CHANNEL == 0] = 0;
+
+				// let the user see DW is not active
+				gDualWatchActive = false;
+				gUpdateStatus    = true;
 			}
 		}
+	}
+	else
+	if (!bRestart)
+	{	// scanning
+
+		gMonitor = false;
+
+		SCANNER_Stop();
+
+		#ifdef ENABLE_VOICE
+			gAnotherVoiceID = VOICE_ID_SCANNING_STOP;
+		#endif
+
+		gRequestDisplayScreen = DISPLAY_MAIN;
 	}
 }
 
@@ -146,7 +190,9 @@ void ACTION_Vox(void)
 	gEeprom.VOX_SWITCH = !gEeprom.VOX_SWITCH;
 	gRequestSaveSettings = true;
 	gFlagReconfigureVfos = true;
+#ifdef ENABLE_VOICE
 	gAnotherVoiceID = VOICE_ID_VOX;
+#endif
 	gUpdateStatus = true;
 }
 
@@ -184,6 +230,7 @@ void ACTION_FM(void)
 			gRequestDisplayScreen = DISPLAY_MAIN;
 			return;
 		}
+		gMonitor = false;
 		RADIO_SelectVfos();
 		RADIO_SetupRegisters(true);
 		FM_Start();
@@ -195,8 +242,8 @@ void ACTION_FM(void)
 
 void ACTION_Handle(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 {
-	uint8_t Short;
-	uint8_t Long;
+	uint8_t Short = ACTION_OPT_NONE;
+	uint8_t Long  = ACTION_OPT_NONE;
 
 	if (gScreenToDisplay == DISPLAY_MAIN && gDTMF_InputMode) {
 		if (Key == KEY_SIDE1 && !bKeyHeld && bKeyPressed) {
@@ -210,7 +257,9 @@ void ACTION_Handle(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 					return;
 				}
 			}
+#ifdef ENABLE_VOICE
 			gAnotherVoiceID = VOICE_ID_CANCEL;
+#endif
 			gRequestDisplayScreen = DISPLAY_MAIN;
 			gDTMF_InputMode = false;
 		}
@@ -221,7 +270,9 @@ void ACTION_Handle(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 	if (Key == KEY_SIDE1) {
 		Short = gEeprom.KEY_1_SHORT_PRESS_ACTION;
 		Long = gEeprom.KEY_1_LONG_PRESS_ACTION;
-	} else {
+	} 
+	else 
+	if (Key == KEY_SIDE2) {
 		Short = gEeprom.KEY_2_SHORT_PRESS_ACTION;
 		Long = gEeprom.KEY_2_LONG_PRESS_ACTION;
 	}
@@ -239,27 +290,30 @@ void ACTION_Handle(KEY_Code_t Key, bool bKeyPressed, bool bKeyHeld)
 		}
 	}
 	switch (Short) {
-	case 1:
+	default:
+	case ACTION_OPT_NONE:
+		break;
+	case ACTION_OPT_FLASHLIGHT:
 		ACTION_FlashLight();
 		break;
-	case 2:
+	case ACTION_OPT_POWER:
 		ACTION_Power();
 		break;
-	case 3:
+	case ACTION_OPT_MONITOR:
 		ACTION_Monitor();
 		break;
-	case 4:
+	case ACTION_OPT_SCAN:
 		ACTION_Scan(true);
 		break;
-	case 5:
+	case ACTION_OPT_VOX:
 		ACTION_Vox();
 		break;
-	case 6:
+	case ACTION_OPT_ALARM:
 #if defined(ENABLE_ALARM)
 		ACTION_AlarmOr1750(false);
 #endif
 		break;
-	case 7:
+	case ACTION_OPT_FM:
 #if defined(ENABLE_FMRADIO)
 		ACTION_FM();
 #endif
